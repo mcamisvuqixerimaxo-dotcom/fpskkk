@@ -686,7 +686,11 @@
     text('ST', phX + 12, phY + 96, 10, '#ffd96b', 'left', 700, true);
     bar(phX + 42, phY + 96, phW - 54, 6, P.st / P.maxst, ['#ffd23f', '#fff59a']);
 
-    const centerW = Math.min(520, Math.max(300, width - (IS_MOBILE ? 470 : 530))), centerX = (width - centerW) / 2;
+    const baseCenterW = Math.min(520, Math.max(300, width - (IS_MOBILE ? 470 : 530)));
+    const centerW = IS_MOBILE ? Math.max(270, baseCenterW - 30) : baseCenterW, centerX = (width - centerW) / 2;
+    const mini = IS_MOBILE && typeof minimapMetrics === 'function'
+      ? minimapMetrics()
+      : { R: 53, cx: width - 67, cy: 62 };
     panel(centerX, 12, centerW, G.boss ? 82 : 56, G.boss ? '#ff5865' : '#63d8ff', .58);
     const mode = G.mode === 'stage' ? `关卡 · ${STAGES[G.stageId - 1].n}` : '无限流';
     text(mode, width / 2 - 60, 20, 10, '#e9c780', 'right', 700, true);
@@ -698,9 +702,16 @@
       text(document.getElementById('bossName').textContent || 'BOSS', centerX + 16, 61, 10, '#ff8992', 'left', 700, true);
       bar(centerX + 92, 62, centerW - 108, 10, G.boss.hp / G.boss.maxhp, ['#8b0000', '#ffb300']);
     }
+    if (IS_MOBILE) {
+      const systemX = centerX + centerW + 8;
+      const systemW = clamp(mini.cx - mini.R - systemX - 8, 54, 86);
+      place('mobileFull', systemX, 12, systemW, 28, fullscreenElement() ? '退出全屏' : '进入全屏', 'dark', 9);
+      place('mobilePause', systemX, 46, systemW, 28, 'Ⅱ 暂停', 'dark', 9);
+    }
 
-    const weapon = WEAPONS[P.wIdx], ammo = P.ammo[weapon.id], whW = IS_MOBILE ? 230 : 210, whH = IS_MOBILE ? 68 : 104;
-    const whX = IS_MOBILE ? 10 : width - whW - 12, whY = IS_MOBILE ? Math.max(126, height - 330) : height - 116;
+    const weapon = WEAPONS[P.wIdx], ammo = P.ammo[weapon.id], whW = 210, whH = IS_MOBILE ? 68 : 104;
+    const whX = IS_MOBILE ? width - whW - 10 : width - whW - 12;
+    const whY = IS_MOBILE ? Math.min(height - whH - 8, mini.cy + mini.R + 8) : height - 116;
     panel(whX, whY, whW, whH, '#65d9ff', .60);
     text(`${weapon.ico} ${weapon.n}`, whX + 12, whY + (IS_MOBILE ? 7 : 10), 13, '#c7f3ff', 'left', 700, true);
     text(`${ammo.mag}`, whX + whW - 60, whY + (IS_MOBILE ? 3 : 7), IS_MOBILE ? 24 : 28, ammo.mag <= weapon.mag * .25 ? '#ff6868' : '#fff', 'right', 800, true);
@@ -710,9 +721,9 @@
       whX + 12, whY + (IS_MOBILE ? 49 : 62), IS_MOBILE ? 9 : 10, '#8292a0');
     if (IS_MOBILE) {
       const joySize = Math.min(136, height * .24), joyY = height - joySize - 20;
-      const innerRadius = joySize + 82, outerRadius = innerRadius + 50;
-      const outerAngles = [8, 19, 30, 41, 52], innerAngles = [10, 26, 42, 58];
-      const outerSize = clamp(height * .10, 34, 42), innerSize = outerSize - 4;
+      const innerRadius = joySize + 78, outerRadius = innerRadius + 56;
+      const outerAngles = [8, 27, 46, 65, 82], innerAngles = [18, 37, 56, 74];
+      const outerSize = clamp(height * .12, 42, 50), innerSize = outerSize - 4;
       WEAPONS.forEach((wpn, i) => {
         const outer = i < 5, angle = (outer ? outerAngles[i] : innerAngles[i - 5]) * Math.PI / 180;
         const radius = outer ? outerRadius : innerRadius, size = outer ? outerSize : innerSize;
@@ -725,8 +736,6 @@
       place('mobileNade', width - joySize - 80, joyY - 56, 50, 48, P.nadeT > 0 ? `${P.nadeT.toFixed(1)}` : '💣', P.nadeT > 0 ? 'dark' : 'orange', 17);
       place('mobileReload', width - 62, joyY - 56, 50, 48, '⟳', 'blue', 20);
       place('mobileDash', width - joySize - 80, height - 58, 50, 46, '»', 'cyan', 20);
-      place('mobileFull', width - 184, 158, 82, 34, fullscreenElement() ? '退出全屏' : '进入全屏', 'dark', 10);
-      place('mobilePause', width - 94, 158, 82, 34, 'Ⅱ 暂停', 'dark', 10);
     } else {
       const slotW = 43, y = height - 58;
       WEAPONS.forEach((wpn, i) => place(`weapon${i}`, 12 + i * (slotW + 5), y, slotW, 44,
