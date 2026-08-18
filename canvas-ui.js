@@ -12,7 +12,7 @@
   const gui = createGUI('last-z-canvas-ui', canvas);
   const controls = [];
   const buttons = Object.create(null);
-  let width = 0, height = 0, howPage = 0, statsPage = 0;
+  let width = 0, height = 0, howPage = 0, statsPage = 0, lastHowNavAt = -Infinity;
 
   const hexRgb = hex => {
     const value = parseInt(hex.replace('#', ''), 16);
@@ -96,12 +96,18 @@
   });
   addButton('start', () => startGame());
   addButton('growth', () => openGrowth());
-  addButton('how', () => { howPage = 0; show('howScreen'); });
+  addButton('how', () => { howPage = 0; lastHowNavAt = -Infinity; show('howScreen'); });
   addButton('growthClose', () => hideEl('growthScreen'));
   for (let i = 0; i < TECHS.length; i++) addButton(`tech${i}`, () => buyTech(TECHS[i].id));
   addButton('howClose', () => hideEl('howScreen'));
-  addButton('howPrev', () => { howPage = Math.max(0, howPage - 1); });
-  addButton('howNext', () => { howPage = Math.min(2, howPage + 1); });
+  const turnHowPage = delta => {
+    const now = performance.now();
+    if (now - lastHowNavAt < 280) return;
+    lastHowNavAt = now;
+    howPage = clamp(howPage + delta, 0, 2);
+  };
+  addButton('howPrev', () => turnHowPage(-1));
+  addButton('howNext', () => turnHowPage(1));
 
   addButton('pauseResume', () => click('btnResume'));
   addButton('pauseFull', () => toggleFullscreenMode());
@@ -136,17 +142,6 @@
     });
   controls.push(accountField);
 
-  const mobileWeaponSlider = gui.slider('cgui-mobile-weapon-slider', 0, 0, 220, 34)
-    .scheme(canvasScheme('cyan')).limits(0, 1).ticks(1, 1, true).weight(10).opaque(70).hide()
-    .setAction(info => {
-      const owned = ownedWeaponIndices();
-      if (owned.length < 2) return;
-      const position = clamp(Math.round(info.value), 0, owned.length - 1);
-      const index = owned[position];
-      if (index !== undefined && index !== P.wIdx) equipWeapon(index);
-    });
-  controls.push(mobileWeaponSlider);
-
   const moveJoy = gui.joystick('cgui-move-stick', 0, 0, 132, 132)
     .scheme(canvasScheme('cyan')).opaque(52).hide().setAction(info => {
       const mag = info.final || info.dead ? 0 : Math.max(0, Math.min(1, info.mag));
@@ -179,6 +174,11 @@
     const size = Math.min(136, height * .24), y = height - size - 20;
     return { x: side === 'l' ? 22 : width - size - 22, y, size };
   }
+  function touchInJoystick(touch, geometry) {
+    const dx = touch.clientX - (geometry.x + geometry.size / 2);
+    const dy = touch.clientY - (geometry.y + geometry.size / 2);
+    return Math.hypot(dx, dy) <= geometry.size * .58;
+  }
   function applyMobileTouch(side, touch, final = false) {
     const joy = JOY[side], g = mobileJoyGeometry(side);
     if (final) {
@@ -198,7 +198,7 @@
     if (!IS_MOBILE || !G.running || G.paused) return;
     for (const touch of event.changedTouches) {
       const side = touch.clientX < width / 2 ? 'l' : 'r', g = mobileJoyGeometry(side);
-      if (touch.clientY >= g.y - 18 && multiTouch[side] === null) {
+      if (touchInJoystick(touch, g) && multiTouch[side] === null) {
         multiTouch[side] = touch.identifier; applyMobileTouch(side, touch);
       }
     }
@@ -266,6 +266,40 @@
     ctx.strokeStyle = p.line.replace(/\.[0-9]+\)/, '.72)');
     ctx.beginPath(); ctx.moveTo(x + 8, y + 1.5); ctx.lineTo(x + Math.min(w * .42, 72), y + 1.5); ctx.stroke();
     ctx.restore();
+  }
+
+  function weaponCirclePlate(cx, cy, size, state, icon) {
+    const selected = state === 'selected', owned = state !== 'locked';
+    ctx.save();
+    ctx.shadowColor = selected ? 'rgba(91,226,255,.58)' : owned ? 'rgba(50,181,224,.24)' : 'rgba(0,0,0,.26)';
+    ctx.shadowBlur = selected ? 16 : owned ? 8 : 3;
+    const g = ctx.createRadialGradient(cx - size * .18, cy - size * .22, 1, cx, cy, size * .52);
+    g.addColorStop(0, selected ? 'rgba(48,139,169,.74)' : owned ? 'rgba(24,76,101,.62)' : 'rgba(20,27,35,.45)');
+    g.addColorStop(1, selected ? 'rgba(5,35,50,.64)' : owned ? 'rgba(4,26,39,.56)' : 'rgba(4,9,15,.38)');
+    ctx.fillStyle = g;
+    ctx.strokeStyle = selected ? 'rgba(177,247,255,.92)' : owned ? 'rgba(99,219,251,.58)' : 'rgba(116,139,153,.24)';
+    ctx.lineWidth = selected ? 2 : 1;
+    ctx.beginPath(); ctx.arc(cx, cy, size / 2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = selected ? 'rgba(221,253,255,.50)' : owned ? 'rgba(139,234,255,.23)' : 'rgba(255,255,255,.05)';
+    ctx.beginPath(); ctx.arc(cx, cy, size * .36, Math.PI * 1.08, Math.PI * 1.82); ctx.stroke();
+    ctx.globalAlpha = state === 'locked' ? .30 : selected ? 1 : .82;
+    ctx.fillStyle = selected ? '#e7fdff' : owned ? '#d5f6ff' : '#8b9aa4';
+    ctx.font = font(Math.round(size * .46), 700);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(icon, cx, cy + 1);
+    ctx.restore();
+  }
+
+  function placeWeaponCircle(id, cx, cy, size, icon, state) {
+    const c = buttons[id];
+    if (!c) return;
+    weaponCirclePlate(cx, cy, size, state, icon);
+    c.moveTo(Math.round(cx - size / 2), Math.round(cy - size / 2));
+    c.w = c.h = Math.round(size);
+    c.text('').scheme(canvasScheme(state === 'selected' ? 'cyan' : state === 'locked' ? 'dark' : 'blue'))
+      .corners(size / 2).transparent().show();
+    if (state === 'locked') c.disable(); else c.enable();
   }
 
   function place(id, x, y, w, h, label, scheme = 'cyan', size = 13) {
@@ -368,7 +402,7 @@
   function titleBlock(kicker, title, subtitle, y = 36) {
     text(kicker, width / 2, y, 12, '#ff6b72', 'center', 700, true);
     text(title, width / 2, y + 20, Math.min(72, Math.max(42, height * .095)), '#dff7ff', 'center', 900, true);
-    if (subtitle) text(subtitle, width / 2, y + Math.min(96, height * .13), 18, '#ff9b9f', 'center', 700, true);
+    if (subtitle) text(subtitle, width / 2, y + Math.min(96, height * .13) + 25, 27, '#ff9b9f', 'center', 700, true);
   }
 
   function drawOrientation() {
@@ -418,11 +452,12 @@
     const top = compact ? 16 : 26;
     titleBlock('SURVIVAL PROTOCOL · 2087', 'LAST Z', '末 日 幸 存 者 射 击', top);
     if (PROFILE) {
-      panel(18, 16, Math.min(310, width * .27), 58, '#57d8ff', .70);
+      const profileW = Math.min(330, width * .27 + 20);
+      panel(18, 16, profileW, 58, '#57d8ff', .70);
       text('当前档案', 30, 25, 9, '#67d8ee', 'left', 700, true);
       text(`${PROFILE.name}  LV.${PROFILE.level}`, 30, 40, 14, '#fff', 'left', 700, true);
       text(`物资 ${PROFILE.credits} · 核心 ${PROFILE.cores}`, 30, 58, 10, '#79efac');
-      place('switchAccount', Math.min(240, width * .20), 28, 66, 34, '切换', 'dark', 11);
+      place('switchAccount', 18 + profileW - 78, 28, 66, 34, '切换', 'dark', 11);
     }
     place('soundSfx', width - 222, 22, 98, 34, SOUND.sfxOn ? '🔊 音效：开' : '🔇 音效：关', SOUND.sfxOn ? 'cyan' : 'dark', 11);
     place('soundBgm', width - 116, 22, 98, 34, SOUND.bgmOn ? '♫ BGM：开' : '♫ BGM：关', SOUND.bgmOn ? 'cyan' : 'dark', 11);
@@ -467,7 +502,7 @@
     if (PROFILE) text(`账号 LV.${PROFILE.level} · 物资 ${PROFILE.credits} · 数据核心 ${PROFILE.cores} · 经验 ${PROFILE.xp}/${accountNeed(PROFILE.level)}`,
       x + 24, y + 78, 13, '#ffd989');
     place('growthClose', x + w - 96, y + 20, 72, 38, '返回', 'dark', 13);
-    const cardGap = 10, cardW = (w - 48 - cardGap * 4) / 5, cardY = y + 122, cardH = Math.min(250, h * .43);
+    const cardGap = 10, cardW = (w - 48 - cardGap * 4) / 5, cardY = y + 112, cardH = Math.min(250, h * .43);
     TECHS.forEach((t, i) => {
       const cx = x + 24 + i * (cardW + cardGap), level = PROFILE?.tech[t.id] || 0, cost = PROFILE ? techCost(t.id) : { credits: 0, cores: 0 };
       panel(cx, cardY, cardW, cardH, '#65d8f5', .58);
@@ -501,36 +536,40 @@
   function drawHow() {
     backdrop('blue');
     const w = Math.min(820, width - 32), h = Math.min(610, height - 28), x = (width - w) / 2, y = (height - h) / 2;
+    const compact = height < 500;
     panel(x, y, w, h, '#63d8ff', .92);
     text('生存手册', x + 24, y + 20, 28, '#c8f5ff', 'left', 800, true);
     text(`${howPage + 1} / 3`, x + w - 128, y + 29, 11, '#7794a8', 'center', 700, true);
     place('howClose', x + w - 92, y + 16, 68, 36, '返回', 'dark', 12);
     let cy = y + 72;
     if (howPage === 1) {
-      text('武器库', x + 28, cy, 16, '#73e8ff', 'left', 700, true); cy += 34;
+      text('武器库', x + 28, cy, 16, '#73e8ff', 'left', 700, true); cy += compact ? 27 : 34;
       WEAPONS.forEach(wpn => {
-        text(`${wpn.ico} ${wpn.n}`, x + 30, cy, 13, '#ffd98a', 'left', 700);
-        text(`${wpn.desc} · 伤害 ${wpn.dmg} · 弹匣 ${wpn.mag}`, x + 190, cy, 12, '#9cabba'); cy += 34;
+        text(`${wpn.ico} ${wpn.n}`, x + 30, cy, compact ? 12 : 13, '#ffd98a', 'left', 700);
+        text(`${wpn.desc} · 伤害 ${wpn.dmg} · 弹匣 ${wpn.mag}`, x + 190, cy, compact ? 11 : 12, '#9cabba'); cy += compact ? 23 : 34;
       });
     } else if (howPage === 2) {
-      text('感染体图鉴（13 种 + BOSS 变体）', x + 28, cy, 16, '#73e8ff', 'left', 700, true); cy += 32;
+      text('感染体图鉴（13 种 + BOSS 变体）', x + 28, cy, 16, '#73e8ff', 'left', 700, true); cy += compact ? 26 : 32;
+      const enemyGap = compact ? 22 : 42;
       ETKEYS.forEach((key, i) => {
         const e = ETYPES[key], col = i % 2, row = Math.floor(i / 2);
-        const ex = x + 30 + col * (w / 2 - 22), ey = cy + row * 42;
-        text(e.n, ex, ey, 13, '#ff9292', 'left', 700);
-        text(`第 ${e.from} 波起 · HP ${e.hp} · 速度 ${e.spd}`, ex + 94, ey, 11, '#8fa2b3');
+        const ex = x + 30 + col * (w / 2 - 22), ey = cy + row * enemyGap;
+        text(e.n, ex, ey, compact ? 11 : 13, '#ff9292', 'left', 700);
+        text(`第 ${e.from} 波起 · HP ${e.hp} · 速度 ${e.spd}`, ex + (compact ? 76 : 94), ey, compact ? 10 : 11, '#8fa2b3');
       });
-      cy += Math.ceil(ETKEYS.length / 2) * 42 + 6;
-      text('生存要点', x + 28, cy, 15, '#73e8ff', 'left', 700, true);
-      wrap(howPages[2][3], x + 28, cy + 26, w - 56, 20, '#afbdc9', 13, 4);
+      cy += Math.ceil(ETKEYS.length / 2) * enemyGap + (compact ? 2 : 6);
+      text('生存要点', x + 28, cy, compact ? 13 : 15, '#73e8ff', 'left', 700, true);
+      wrap(howPages[2][3], x + 28, cy + (compact ? 20 : 26), w - 56, compact ? 16 : 20, '#afbdc9', compact ? 11 : 13, compact ? 2 : 4);
     } else {
       text(howPages[0][0], x + 28, cy, 16, '#73e8ff', 'left', 700, true); cy += 30;
       cy += wrap(howPages[0][1], x + 28, cy, w - 56, 22, '#afbdc9', 13, 6) * 22 + 24;
       text(howPages[0][2], x + 28, cy, 16, '#73e8ff', 'left', 700, true); cy += 30;
       wrap(howPages[0][3], x + 28, cy, w - 56, 22, '#afbdc9', 13, 9);
     }
-    place('howPrev', x + 24, y + h - 50, 90, 34, '上一页', howPage > 0 ? 'blue' : 'dark', 12);
-    place('howNext', x + w - 114, y + h - 50, 90, 34, '下一页', howPage < 2 ? 'blue' : 'dark', 12);
+    const prev = place('howPrev', x + 24, y + h - 50, 90, 34, '上一页', howPage > 0 ? 'blue' : 'dark', 12);
+    const next = place('howNext', x + w - 114, y + h - 50, 90, 34, '下一页', howPage < 2 ? 'blue' : 'dark', 12);
+    if (howPage === 0) prev?.disable();
+    if (howPage === 2) next?.disable();
   }
 
   function drawPause() {
@@ -660,22 +699,27 @@
       bar(centerX + 92, 62, centerW - 108, 10, G.boss.hp / G.boss.maxhp, ['#8b0000', '#ffb300']);
     }
 
-    const weapon = WEAPONS[P.wIdx], ammo = P.ammo[weapon.id], whW = IS_MOBILE ? 250 : 210, whH = IS_MOBILE ? 132 : 104;
-    const whX = IS_MOBILE ? 10 : width - whW - 12, whY = IS_MOBILE ? height - 270 : height - 116;
+    const weapon = WEAPONS[P.wIdx], ammo = P.ammo[weapon.id], whW = IS_MOBILE ? 230 : 210, whH = IS_MOBILE ? 68 : 104;
+    const whX = IS_MOBILE ? 10 : width - whW - 12, whY = IS_MOBILE ? Math.max(126, height - 330) : height - 116;
     panel(whX, whY, whW, whH, '#65d9ff', .60);
-    text(`${weapon.ico} ${weapon.n}`, whX + 12, whY + 10, 13, '#c7f3ff', 'left', 700, true);
-    text(`${ammo.mag}`, whX + whW - 60, whY + 7, 28, ammo.mag <= weapon.mag * .25 ? '#ff6868' : '#fff', 'right', 800, true);
-    text(`/ ${ammo.res > 1e8 ? '∞' : ammo.res}`, whX + whW - 12, whY + 15, 15, '#687887', 'right', 700, true);
-    bar(whX + 12, whY + 48, whW - 24, 5, ammo.mag / weapon.mag, ['#ffd23f', '#fff59a']);
-    text(`伤害 ${Math.round(weapon.dmg * P.perks.dmg)} · 射速 ${Math.round(weapon.rpm * P.perks.rof)}${weapon.pel > 1 ? ` · ${weapon.pel}弹丸` : ''}`, whX + 12, whY + 62, 10, '#8292a0');
+    text(`${weapon.ico} ${weapon.n}`, whX + 12, whY + (IS_MOBILE ? 7 : 10), 13, '#c7f3ff', 'left', 700, true);
+    text(`${ammo.mag}`, whX + whW - 60, whY + (IS_MOBILE ? 3 : 7), IS_MOBILE ? 24 : 28, ammo.mag <= weapon.mag * .25 ? '#ff6868' : '#fff', 'right', 800, true);
+    text(`/ ${ammo.res > 1e8 ? '∞' : ammo.res}`, whX + whW - 12, whY + (IS_MOBILE ? 10 : 15), IS_MOBILE ? 13 : 15, '#687887', 'right', 700, true);
+    bar(whX + 12, whY + (IS_MOBILE ? 37 : 48), whW - 24, 5, ammo.mag / weapon.mag, ['#ffd23f', '#fff59a']);
+    text(`伤害 ${Math.round(weapon.dmg * P.perks.dmg)} · 射速 ${Math.round(weapon.rpm * P.perks.rof)}${weapon.pel > 1 ? ` · ${weapon.pel}弹丸` : ''}`,
+      whX + 12, whY + (IS_MOBILE ? 49 : 62), IS_MOBILE ? 9 : 10, '#8292a0');
     if (IS_MOBILE) {
-      const owned = ownedWeaponIndices(), position = Math.max(0, owned.indexOf(P.wIdx)), maxPosition = Math.max(0, owned.length - 1);
-      text(`滑动切换已获取武器  ${position + 1}/${owned.length}`, whX + 12, whY + 78, 9, '#73cfe8', 'left', 700, true);
-      mobileWeaponSlider.limits(0, Math.max(1, maxPosition)).ticks(Math.max(1, maxPosition), 1, true).value(position);
-      placeControl(mobileWeaponSlider, whX + 8, whY + 91, whW - 16, 34);
-      mobileWeaponSlider.scheme(canvasScheme('cyan')).opaque(70);
-      if (owned.length < 2) mobileWeaponSlider.disable();
       const joySize = Math.min(136, height * .24), joyY = height - joySize - 20;
+      const innerRadius = joySize + 82, outerRadius = innerRadius + 50;
+      const outerAngles = [8, 19, 30, 41, 52], innerAngles = [10, 26, 42, 58];
+      const outerSize = clamp(height * .10, 34, 42), innerSize = outerSize - 4;
+      WEAPONS.forEach((wpn, i) => {
+        const outer = i < 5, angle = (outer ? outerAngles[i] : innerAngles[i - 5]) * Math.PI / 180;
+        const radius = outer ? outerRadius : innerRadius, size = outer ? outerSize : innerSize;
+        const cx = Math.cos(angle) * radius, cy = height - Math.sin(angle) * radius;
+        const state = !P.owned.includes(wpn.id) ? 'locked' : i === P.wIdx ? 'selected' : 'owned';
+        placeWeaponCircle(`weapon${i}`, cx, cy, size, wpn.ico, state);
+      });
       placeControl(moveJoy, 22, joyY, joySize, joySize);
       placeControl(aimJoy, width - joySize - 22, joyY, joySize, joySize);
       place('mobileNade', width - joySize - 80, joyY - 56, 50, 48, P.nadeT > 0 ? `${P.nadeT.toFixed(1)}` : '💣', P.nadeT > 0 ? 'dark' : 'orange', 17);
